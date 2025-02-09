@@ -3,7 +3,7 @@ from qgis.core import (
     QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle,
     QgsCoordinateReferenceSystem
 )
-from osgeo import gdal
+from osgeo import gdal, osr
 from qgis import processing
 
 # -------------------USER INPUTS----------------------------------------
