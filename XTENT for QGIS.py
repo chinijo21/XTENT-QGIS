@@ -9,15 +9,22 @@ from qgis import processing
 # -------------------USER INPUTS----------------------------------------
 #At some point this will be done via QGIS at least inputing the path in the console
 # Input parameters (adjust these according to your data)
+use_costmodel = True #Set to false for an euclidean calc.
+
 input_layer_name = 'yacimientos' # Name of the input point layer in QGIS
 size_field = 'z' # Field name representing the size (population, relevance...) MUST BE A NUMBER
-cost_layer_path = r'C:\Users\elpor\...\cumcost_lidarOK.tif'  # Your cummulative cost, in this case using r.walk from GRASS. Forgot the extension - Use high definition data where possible
-max_cost = 3600 #Max travel time
+
+#Cost model params (only if cost = true)
+cost_layer_path = r'C:\Users\elpor\...\cumcost_lidarOK.tif' if use_costmodel else None # Your cummulative cost, in this case using r.walk from GRASS. Forgot the extension - Use high definition data where possible
+max_cost = 3600 if use_costmodel else None #Max travel time
+
+#For both models
 beta = 2    #Put your beta as you wish, might need recalibration
-max_distance = 5000
+max_distance = 5000 #In meters
 inf = -9999 #Just in case we go oob
 
 # -------------------SETTING OUTPUTS-------------------------------------
+output_res = 1000 # I meters for classic model
 output_dominant_path = 'C:/.../dominant.tif' # Output path for dominant IDs raster
 output_influence_path = 'C:/.../influence.tif' # Output path for influence values raster
 output_polygons_path = 'C:/.../influence_areas.gpkg'  # Output path for polygons
