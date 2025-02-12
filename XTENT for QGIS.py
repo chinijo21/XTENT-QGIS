@@ -34,22 +34,32 @@ output_polygons_path = 'C:/.../influence_areas.gpkg'  # Output path for polygons
 #We need to get sites + cumcost
 # Retrieve layers and its CRS
 input_layer = QgsProject.instance().mapLayersByName(input_layer_name)[0]
-cost_raster = gdal.Open(cost_layer_path)
-cost_band = cost_raster.GetRasterBand(1)
-cost_transform = cost_raster.GetGeoTransform()
-output_crs = QgsCoordinateReferenceSystem(cost_raster.GetProjection())  # Use cost layer's CRS should be the same as the project
+#Cost model set
+if use_costmodel:
+    cost_raster = gdal.Open(cost_layer_path)
+    cost_band = cost_raster.GetRasterBand(1)
+    cost_transform = cost_raster.GetGeoTransform()
+    output_crs = QgsCoordinateReferenceSystem(cost_raster.GetProjection())  # Use cost layer's CRS should be the same as the project
 
 # -------------RASTER DIMENSIONS + ARRAYS-------------------------------
-#Previous version wasn't accountig for the cost layer's res (x_res - y_res instead)
-x_min = cost_transform[0]
-y_max = cost_transform[3]
-x_res = cost_transform[1]
-y_res = abs(cost_transform[5])  # :) I almost jumped of a bridge
+    #Previous version wasn't accountig for the cost layer's res (x_res - y_res instead)
+    x_min = cost_transform[0]
+    y_max = cost_transform[3]
+    x_res = cost_transform[1]
+    y_res = abs(cost_transform[5])  # :) I almost jumped of a bridge
 
-# Determine raster dimensions
-width = cost_raster.RasterXSize
-height = cost_raster.RasterYSize
-
+    # Determine raster dimensions
+    width = cost_raster.RasterXSize
+    height = cost_raster.RasterYSize
+else:
+    #Classic model taken from v1
+    output_crs = input_layer.crs()
+    extent = input_layer.extent().buffered(max_distance)
+    x_min = extent.xMinimum()
+    y_max = extent.yMaximum()
+    width = int((extent.xMaximum() - x_min) / output_res)
+    height = int((y_max - extent.yMinimum()) / output_res)
+   
 # Initialize numpy arrays for storing results (filled with NoData)
 # Might throw an error if you have null values WIP
 dominant_data = np.full((height, width), inf, dtype=np.float32)
