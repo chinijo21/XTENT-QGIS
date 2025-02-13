@@ -76,16 +76,29 @@ for fid, feature in features.items():
 # Iterate through each cell in the raster
 for row in range(height):
     for col in range(width):
-        x_center = x_min + (col + 0.5) * x_res
-        y_center = y_max - (row + 0.5) * y_res
+        if use_costmodel:
+            x_center = x_min + (col + 0.5) * cost_transform[1]
+            y_center = y_max - (row + 0.5) * abs(cost_transform[5])
+        else:
+            x_center = x_min + (col + 0.5) * output_res
+            y_center = y_max - (row + 0.5) * output_res
+
         current_point = QgsPointXY(x_center, y_center)
+
         # Define search area around the cell (taken directly from QGIS manual)
+        if use_costmodel:
+            cell_size_x = cost_transform[1]
+            cell_size_y = abs(cost_transform[5])
+        else:
+            cell_size_x = cell_size_y = output_res #Making sure it stays the same size as the original
+
         search_rect = QgsRectangle(
             x_center - max_distance * x_res,
             y_center - max_distance * y_res,
             x_center + max_distance * x_res,
             y_center + max_distance * y_res
         )
+
         # Query features within the search area
         candidate_fids = spatial_index.intersects(search_rect)
         if not candidate_fids:
@@ -97,6 +110,7 @@ for row in range(height):
         for fid in candidate_fids:
             feature = features[fid]
             point = feature.geometry().asPoint()
+            #WIP iteration either in cost or euclidean
             
             # Read cost from the precomputed layer
             cost_array = cost_band.ReadAsArray(col, row, 1, 1)
