@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from qgis.core import (
     QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle,
     QgsCoordinateReferenceSystem
@@ -79,24 +80,27 @@ for row in range(height):
         if use_costmodel:
             x_center = x_min + (col + 0.5) * cost_transform[1]
             y_center = y_max - (row + 0.5) * abs(cost_transform[5])
+            cell_size_x = cost_transform[1]
+            cell_size_y = abs(cost_transform[5])
         else:
             x_center = x_min + (col + 0.5) * output_res
             y_center = y_max - (row + 0.5) * output_res
+            cell_size_x = cell_size_y = output_res
 
         current_point = QgsPointXY(x_center, y_center)
 
         # Define search area around the cell (taken directly from QGIS manual)
         if use_costmodel:
-            cell_size_x = cost_transform[1]
-            cell_size_y = abs(cost_transform[5])
+            max_dist_x = max_distance / cell_size_x
+            max_dist_y = max_distance / cell_size_y
         else:
-            cell_size_x = cell_size_y = output_res #Making sure it stays the same size as the original
+            max_dist_x = max_dist_y = max_distance / output_res
 
         search_rect = QgsRectangle(
-            x_center - max_distance * x_res,
-            y_center - max_distance * y_res,
-            x_center + max_distance * x_res,
-            y_center + max_distance * y_res
+            x_center - max_distance,
+            y_center - max_distance,
+            x_center + max_distance,
+            y_center + max_distance
         )
 
         # Query features within the search area
@@ -110,53 +114,44 @@ for row in range(height):
         for fid in candidate_fids:
             feature = features[fid]
             point = feature.geometry().asPoint()
-            #WIP iteration either in cost or euclidean
+            if use_costmodel:
+                # Cost-based calculation
+                cost_array = cost_band.ReadAsArray(col, row, 1, 1)
+                cost = cost_array[0, 0] if cost_array else inf
+                if cost <= 0 or cost > max_cost:
+                    continue
+                influence = feature[size_field] / (cost ** beta)
+            else:
+                # Classic Euclidean calculation
+                dx = point.x() - x_center
+                dy = point.y() - y_center
+                distance = math.hypot(dx, dy)
+                if distance > max_distance:
+                    continue
+                influence = feature[size_field] / (distance ** beta)
             
-            # Read cost from the precomputed layer
-            cost_array = cost_band.ReadAsArray(col, row, 1, 1)
-            cost = cost_array[0, 0] if cost_array is not None else inf
-            
-            if cost <= 0 or cost > max_cost:
-                continue
-            
-            size = feature[size_field]
-            if not size or size <= 0:
-                continue
-                #XTENT: modify as you wish
-                #log
-                #influence = size / (1 + math.log(distance))
-                #expo
-                #influence = size * math.exp(-beta * distance)
-                #Classic
-            influence = size / (cost ** beta)
-            # Track maximum influence and dominant feature
             if influence > max_influence:
                 max_influence = influence
                 dominant_fid = fid
-        # Update raster data if influence is valid
+        
         if max_influence > 0:
             dominant_data[row, col] = dominant_fid
             influence_data[row, col] = max_influence
 
 # ------------------SAVE RASTERS----------------------------------------
 driver = gdal.GetDriverByName('GTiff')
-ds_dominant = driver.Create(
-    output_dominant_path, width, height, 1, gdal.GDT_Float32
-)
-ds_dominant.SetGeoTransform((x_min, x_res, 0, y_max, 0, -y_res))  # Use cost layer's resolution
+if use_costmodel:
+    geo_transform = (x_min, cost_transform[1], 0, y_max, 0, -abs(cost_transform[5]))
+else:
+    geo_transform = (x_min, output_res, 0, y_max, 0, -output_res)
+
+# Save dominant IDs raster
+ds_dominant = driver.Create(output_dominant_path, width, height, 1, gdal.GDT_Float32)
+ds_dominant.SetGeoTransform(geo_transform)
 ds_dominant.SetProjection(output_crs.toWkt())
 ds_dominant.GetRasterBand(1).WriteArray(dominant_data)
 ds_dominant.GetRasterBand(1).SetNoDataValue(inf)
 ds_dominant = None
-
-ds_influence = driver.Create(
-    output_influence_path, width, height, 1, gdal.GDT_Float32
-)
-ds_influence.SetGeoTransform((x_min, x_res, 0, y_max, 0, -y_res))
-ds_influence.SetProjection(output_crs.toWkt())
-ds_influence.GetRasterBand(1).WriteArray(influence_data)
-ds_influence.GetRasterBand(1).SetNoDataValue(inf)
-ds_influence = None
 
 # -----------------POLYGONIZE + SMOOTH----------------------------------
 processing.run("gdal:polygonize", {
@@ -179,4 +174,4 @@ iface.addRasterLayer(output_dominant_path, 'Dominant_IDs')
 iface.addRasterLayer(output_influence_path, 'Influence_Values')
 iface.addVectorLayer(smoothy_polygons_path, 'Smoothed_Influence', 'ogr')
 
-print("XTENT with cost distance completed!")
+print(f"XTENT processing completed using {'cost-based' if use_costmodel else 'classic'} model!")
