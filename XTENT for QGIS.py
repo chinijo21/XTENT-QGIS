@@ -2,7 +2,7 @@ import numpy as np
 import math
 from qgis.core import (
     QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle,
-    QgsCoordinateReferenceSystem
+    QgsCoordinateReferenceSystem, QgsProcessingException
 )
 from osgeo import gdal, osr
 from qgis import processing
@@ -34,10 +34,17 @@ output_polygons_path = 'C:/.../influence_areas.gpkg'  # Output path for polygons
 # ------------------LOAD LAYERS + CRS-----------------------------------
 #We need to get sites + cumcost
 # Retrieve layers and its CRS
-input_layer = QgsProject.instance().mapLayersByName(input_layer_name)[0]
+try:
+    input_layer = QgsProject.instance().mapLayersByName(input_layer_name)[0]
+except IndexError:
+    raise QgsProcessingException(f"Layer '{input_layer_name}' not found!")
+if use_costmodel and not cost_layer_path:
+    raise QgsProcessingException("Cost layer path required for cost model!")
 #Cost model set
 if use_costmodel:
     cost_raster = gdal.Open(cost_layer_path)
+    if not cost_raster:
+        raise QgsProcessingException("Failed to open cost raster!")
     cost_band = cost_raster.GetRasterBand(1)
     cost_transform = cost_raster.GetGeoTransform()
     output_crs = QgsCoordinateReferenceSystem(cost_raster.GetProjection())  # Use cost layer's CRS should be the same as the project
