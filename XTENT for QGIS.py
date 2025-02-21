@@ -62,6 +62,11 @@ if use_costmodel:
 else:
     #Classic model taken from v1
     output_crs = input_layer.crs()
+    if not output_crs.isValid():
+        raise QgsProcessingException("Invalid layer CRS!!")
+    if output_crs.isGeographic():
+        raise QgsProcessingException("Classic model requires a projected CRS")
+
     extent = input_layer.extent().buffered(max_distance)
     x_min = extent.xMinimum()
     y_max = extent.yMaximum()
@@ -78,6 +83,9 @@ influence_data = np.full((height, width), inf, dtype=np.float32)
 spatial_index = QgsSpatialIndex()
 features = {f.id(): f for f in input_layer.getFeatures()}
 for fid, feature in features.items():
+    if not feature.hasGeometry():
+        continue
+    features[feature.id()] = feature
     spatial_index.insertFeature(feature)
 
 # -----------------ITERATE CELLS----------------------------------------
@@ -123,8 +131,12 @@ for row in range(height):
             point = feature.geometry().asPoint()
             if use_costmodel:
                 # Cost-based calculation
-                cost_array = cost_band.ReadAsArray(col, row, 1, 1)
-                cost = cost_array[0, 0] if cost_array else inf
+                try:
+                    cost_array = cost_band.ReadAsArray(col, row, 1, 1)
+                    cost = cost_array[0, 0] if cost_array else inf
+                except:
+                    cost = inf
+
                 if cost <= 0 or cost > max_cost:
                     continue
                 influence = feature[size_field] / (cost ** beta)
@@ -133,7 +145,7 @@ for row in range(height):
                 dx = point.x() - x_center
                 dy = point.y() - y_center
                 distance = math.hypot(dx, dy)
-                if distance > max_distance:
+                if distance > max_distance or distance == 0:
                     continue
                 influence = feature[size_field] / (distance ** beta)
             
@@ -142,24 +154,43 @@ for row in range(height):
                 dominant_fid = fid
         
         if max_influence > 0:
-            dominant_data[row, col] = dominant_fid
+            dominant_data[row, col] = dominant_fid if dominant_fid is not None else inf
             influence_data[row, col] = max_influence
 
 # ------------------SAVE RASTERS----------------------------------------
 driver = gdal.GetDriverByName('GTiff')
+
+#Create dominant raster
+ds_dominant = driver.Create(
+    output_dominant_path, 
+    width, 
+    height, 
+    1, 
+    gdal.GDT_Float32)
+
 if use_costmodel:
-    geo_transform = (x_min, cost_transform[1], 0, y_max, 0, -abs(cost_transform[5]))
+    ds_dominant.SetGeoTransform((
+        x_min,
+        cost_transform[1],
+        0,
+        y_max,
+        0,
+        -abs(cost_transform[5])
+    ))
 else:
-    geo_transform = (x_min, output_res, 0, y_max, 0, -output_res)
-
+    ds_dominant.SetGeoTransform((
+        x_min,
+        output_res,
+        0,
+        y_max,
+        0,
+        -output_res)
+    )
 # Save dominant IDs raster
-ds_dominant = driver.Create(output_dominant_path, width, height, 1, gdal.GDT_Float32)
-ds_dominant.SetGeoTransform(geo_transform)
-ds_dominant.SetProjection(output_crs.toWkt())
-ds_dominant.GetRasterBand(1).WriteArray(dominant_data)
-ds_dominant.GetRasterBand(1).SetNoDataValue(inf)
-ds_dominant = None
-
+    ds_dominant.SetProjection(output_crs.toWkt())
+    ds_dominant.GetRasterBand(1).WriteArray(dominant_data)
+    ds_dominant.GetRasterBand(1).SetNoDataValue(inf)
+    ds_dominant = None
 # -----------------POLYGONIZE + SMOOTH----------------------------------
 processing.run("gdal:polygonize", {
     'INPUT': output_dominant_path,
