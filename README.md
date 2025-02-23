@@ -1,7 +1,5 @@
 # 📖 XTENT for QGIS
-    *Calculate Influence Areas with Cost or Euclidean Distance
-============================================================================
-
+Calculate Influence Areas with Cost or Euclidean Distance.
 Model territorial influence for the giggles.
 
 ## ✨ Introduction
@@ -36,7 +34,12 @@ This Python script brings Colin Renfrew’s XTENT method into QGIS, letting you 
 
 *   **QGIS 3.x** (with Python console access), wich kinda was assumed but yk
     
-*   import numpy as np # For array magic 🪄import math # Because someone needs to do the math 💡from qgis.core import (QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle, QgsCoordinateReferenceSystem) # QGIS core tools 🛠️from osgeo import gdal, osr # Raster wrangling 🤠from qgis import processing # For polygon smoothness 📐
+*   Imports and libraries needed:
+    *   numpy as np. For array magic 🪄
+    *   math.Because someone needs to do the math 💡
+    *   from qgis.core import (QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle, QgsCoordinateReferenceSystem), **QGIS core tools** 🛠️
+    *   from osgeo import gdal, osr. For raster wrangling 🤠
+    *   from qgis import processing # For polygon smoothness 📐
     
 *   **Input Data:**
     
@@ -60,7 +63,15 @@ This Python script brings Colin Renfrew’s XTENT method into QGIS, letting you 
 
 ### Configure Settings (Edit the script):
 
-`use_costmodel = True  # Cost-based 🏔️ or Euclidean 📏? Choose wisely.  input_layer_name = "your_layer"  # Case-sensitive! QGIS won’t guess.  size_field = "wealth"  # Or "goat_count". We don’t judge. 🐐  beta = 2  # Bigger beta = faster influence drop-off. Science!  max_distance = 5000  # Meters (Euclidean) or cost units. Don’t overreach.   `
+`use_costmodel = True  # Cost-based 🏔️ or Euclidean 📏? Choose wisely.`
+
+`input_layer_name = "your_layer"  # Case-sensitive! QGIS won’t guess.`
+
+`size_field = "wealth"  # Or "goat_count". We don’t judge. 🐐`  
+
+`beta = 2  # Bigger beta = faster influence drop-off. Science!` 
+
+`max_distance = 5000  # Meters (Euclidean) or cost units. Don’t overreach.`
 
 ### Run It:
 
@@ -86,7 +97,7 @@ This Python script brings Colin Renfrew’s XTENT method into QGIS, letting you 
 
 Colin Renfrew’s 1970s XTENT model answered: _“Who’s the boss here?”_ for ancient settlements. The formula:
 
-Influence=SizeDistanceβ\\text{Influence} = \\frac{\\text{Size}}{\\text{Distance}^\\beta}
+$Influence=SizeDistanceβ\\text{Influence} = \\frac{\\text{Size}}{\\text{Distance}^\\beta}$
 
 *   **Size**: Settlement clout (population, resources, or goats).
     
