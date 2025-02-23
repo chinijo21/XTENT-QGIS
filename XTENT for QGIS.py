@@ -7,6 +7,17 @@ from qgis.core import (
 from osgeo import gdal, osr
 from qgis import processing
 
+def get_input ():
+    inputs = {} #Here to store all of our inputs
+
+    #Ask for the type of analysis
+    inputs['use_costmodel'] = input("\nChoose analysis mode: \n1. Cost-based\n2. Euclidean(classic)\nEnter 1 or 2: ") =='1'
+
+    #Let's do some fun, let's scan user layers and make them select :)
+    #1 a way to scan only multipoint layers ->function get_layers
+    #2 enumerate said layers ->idem
+    #3 selection of desire layer ->should be easy
+    #4 Store the layer somewhere prop 1 point_layer = get_layers??
 # -------------------USER INPUTS----------------------------------------
 use_costmodel = True  # Set to False for Euclidean calculation
 input_layer_name = 'yacimientos'
