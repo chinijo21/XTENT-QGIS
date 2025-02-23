@@ -1,102 +1,121 @@
-# XTENT: Influence Extent Calculation for QGIS
+# 📖 XTENT for QGIS
+    *Calculate Influence Areas with Cost or Euclidean Distance
+============================================================================
 
-XTENT is a Python-based tool designed to compute spatial influence extents from point features using a customizable distance decay formula (defaulting to the Renfrew formulation). The script integrates with QGIS and GDAL to generate both raster and vector outputs representing the dominant influence areas of point features based on user-defined parameters.
+Model territorial influence for the giggles.
 
-## Overview
+## ✨ Introduction
+--------------
 
-The script performs the following tasks:
-- **Input Data Retrieval:** Loads a point layer (e.g., sites or "yacimientos") and a cumulative cost raster (e.g., generated from GRASS's `r.walk`) from the current QGIS project.
-- **Raster Grid Generation:** Constructs a raster grid over a buffered extent of the input points.
-- **Influence Calculation:** For each cell in the raster grid, it calculates the influence of nearby points using a distance decay formula. The default formula is:  
-  `influence = size / (distance^beta)`  
-  with a special case for zero distance.
-- **Output Generation:** 
-  - Writes two GeoTIFF raster files:
-    - A **Dominant IDs** raster, where each cell holds the ID of the point exerting the maximum influence.
-    - An **Influence Values** raster, which stores the calculated influence values.
-  - Polygonizes the Dominant IDs raster to produce vector polygons and applies a smoothing algorithm to improve their visual appearance.
-- **QGIS Integration:** Loads the generated layers directly into QGIS for immediate visualization and further analysis.
+This Python script brings Colin Renfrew’s XTENT method into QGIS, letting you map influence areas for settlements using cost-based travel (terrain difficulty, time) or straight-line distance. Perfect for archaeologists, historians, or anyone who’s ever wondered, “How far could Bronze Age Bob flex his grain silo dominance?”
 
-## Features
+## 🚀 Features
+-----------
 
-- **Customizable Parameters:** Easily adjust input layer names, output paths, decay parameters (`beta`, `max_distance`), and raster resolution.
-- **Spatial Indexing:** Utilizes QGIS’s spatial index for efficient proximity searches.
-- **GDAL Integration:** Outputs standardized GeoTIFF files and leverages GDAL’s polygonization.
-- **Processing Tools:** Uses QGIS Processing algorithms to smooth the output polygons.
+### Two Modes, One Script 🧮
 
-## Requirements
+*   **Cost-Based:** Because walking uphill should matter. Uses raster travel costs (e.g., slope).
+    
+*   **Euclidean:** Classic “as-the-crow-flies” mode. Great for when you’re feeling nostalgic for 1970s archaeology papers.
+    
 
-- **QGIS 3.x or later:** The script is designed to run within the QGIS Python environment.
-- **Python Libraries:**
-  - `math`
-  - `numpy`
-  - `osgeo` (GDAL and OSR)
-  - QGIS Python modules (`qgis.core`, `qgis`, `processing`)
+### Beta Control 🔧
 
-Make sure your QGIS installation includes these libraries (typically available by default in the QGIS Python environment).
+*   Tweak beta to make influence decay faster (**beta > 1**) or slower (**beta < 1**).
+    
+*   Warning: **Beta = 0** will break physics and Renfrew’s heart, and the script probably will shout at you.
+    
 
-## Installation
+### Smooth Operator 🌀
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/chinijo21/xtent-qgis.git
-    Open the project in QGIS:
-        Load your point and cumulative cost raster layers into QGIS.
-        Open the Python Console in QGIS and run the script, or add it as a custom processing script.
+*   Turns jagged raster borders into polished polygons. No more Tetris looking territories.
+    
 
-## Usage
-  1. Prepare Your Data:
-        -Point Layer: Ensure you have a point layer (default name: yacimientos) loaded in QGIS with a numeric field (default: z) representing the size or relevance of each point.
-        -Cost Raster: Load your cumulative cost raster layer (default name: cumcost_lidarOk) into QGIS.
+## ⚙️ Requirements
+---------------
 
-  2. Configure Parameters: Open the script and modify the following user inputs as needed:
-        -input_layer_name: Name of your point layer.
-        -size_field: Field containing the numeric size/relevance value.
-        -cost_layer_name: Name of your cumulative cost raster.
-        -max_cost: Maximum travel time threshold.
-        -beta: Distance decay exponent.
-        -max_distance: Maximum influence distance (in meters).
-        -Output paths for the dominant IDs raster, influence raster, and polygon file.
+*   **QGIS 3.x** (with Python console access), wich kinda was assumed but yk
+    
+*   import numpy as np # For array magic 🪄import math # Because someone needs to do the math 💡from qgis.core import (QgsProject, QgsPointXY, QgsSpatialIndex, QgsRectangle, QgsCoordinateReferenceSystem) # QGIS core tools 🛠️from osgeo import gdal, osr # Raster wrangling 🤠from qgis import processing # For polygon smoothness 📐
+    
+*   **Input Data:**
+    
+    *   A point layer with a numeric “size” field (population, wealth, or how many goats a settlement has). A number **:)**
+        
+    *   A cost raster (if using cost mode). Pro tip: Elevation rasters work, but “how many wolves are here” is not a valid cost metric.
+        
 
-  3. Run the Script: Execute the script from the QGIS Python Console or as a processing tool. The script will:
-        -Build a spatial index for the point features.
-        -Loop through each cell in a generated raster grid.
-        -Calculate influence values based on the proximity and size of each point.
-        -Write the output rasters and vector polygons to disk.
-        -Automatically load the results into QGIS.
+## 🔧 Installation
+---------------
 
-  4. Review the Results:
-        -Dominant IDs Raster: Each cell indicates the ID of the point with the highest influence.
-        -Influence Values Raster: Contains the computed influence for each cell.
-        -Smoothed Polygons: Vector layer representing influence areas with smoothed boundaries.
+1.  pip install numpy, gdal # The usual suspects 🕵️
 
-## Code Structure
+2.  **QGIS** imports should be already installed if you have QGIS aswell **Python**     
 
-  - User Inputs:
-    Set up the parameters (input layers, fields, decay parameters, output file paths) at the beginning of the script.
+3.  **Download the Script:** Save XTENT\_for\_QGIS.py somewhere you won’t forget (like next to your “important” vacation photos).
+    
 
-  - Layer & CRS Setup:
-    Retrieves input layers from QGIS and ensures consistent coordinate reference systems (CRS).
+## 🎯 Usage
+--------
 
-  - Raster Processing Loop:
-    Iterates over each raster cell, computes distances to nearby point features, and calculates influence using a customizable decay function.
+### Configure Settings (Edit the script):
 
-  - Raster and Polygon Output:
-        Writes the dominant ID and influence values as GeoTIFF files.
-        Uses GDAL's polygonize tool to convert the dominant raster into vector polygons.
-        Applies a smoothing algorithm to refine the polygon boundaries.
+`use_costmodel = True  # Cost-based 🏔️ or Euclidean 📏? Choose wisely.  input_layer_name = "your_layer"  # Case-sensitive! QGIS won’t guess.  size_field = "wealth"  # Or "goat_count". We don’t judge. 🐐  beta = 2  # Bigger beta = faster influence drop-off. Science!  max_distance = 5000  # Meters (Euclidean) or cost units. Don’t overreach.   `
 
-  - QGIS Integration:
-        The final output layers are added to the current QGIS project for immediate visualization.
+### Run It:
 
-## Customization
-  - Distance Decay Formula: modify the influence calculation section in the script to experiment with different decay functions (e.g., exponential, logarithmic).
+1.  Open **QGIS** → **Python Console** → **Show Editor**.
+    
+2.  Load the script and click **Run**.
+    
+3.  Wait. If it crashes, blame GDAL (it is probably your fault).
+    
 
-  - Smoothing Parameters: adjust the number of iterations and offset in the smoothing algorithm (native:smoothgeometry) to control the smoothness of the polygons.
+## 📂 Outputs
+----------
 
-## WIP
-  Using a cost surface instead of euclidean distance
+*   **Dominant\_IDs.tif** 🏆: Shows which settlement dominates each pixel.
+    
+*   **Influence\_Values.tif** 📈: How strongly they dominate. Higher = more “my goats here!” energy.
+    
+*   **Smoothed\_Influence.gpkg** 🎨: Polygons so smooth, they’d make a Roman road jealous.
+    
 
-Contributing
+## 📜 About XTENT & Colin Renfrew
+------------------------------
 
-Contributions, suggestions, and improvements are welcome. If you encounter any issues or have ideas for new features, please open an issue or submit a pull request.
+Colin Renfrew’s 1970s XTENT model answered: _“Who’s the boss here?”_ for ancient settlements. The formula:
+
+Influence=SizeDistanceβ\\text{Influence} = \\frac{\\text{Size}}{\\text{Distance}^\\beta}
+
+*   **Size**: Settlement clout (population, resources, or goats).
+    
+*   **Distance**: Travel cost or straight-line distance.
+    
+*   **Beta**: Decay rate. Renfrew used **1.0**, but you’re allowed to rebel. 
+    
+
+This script modernizes his work, because even theoretical archaeologists deserve GIS tools and what he knew about rasters and all of that.
+There are/were another solutions but I found them quite tedious (a lot of dependencies) and outdated
+
+## 🚨 Troubleshooting
+------------------
+
+*   **“Layer not found!”** → Check spelling. QGIS is very literal.
+    
+*   **Invalid CRS** → Use projected coordinates (meters). Latitude won’t cut it. 🌍
+    
+*   **Cost raster glitches** → Ensure it’s not just a photo of your cat. 🐱 I personally tested it with cost layers created via GRASS.
+
+## 🔧 WIP
+----------
+*   Would love to make you type in the console your paths, options..., instead of modificating the script.
+
+*   Temporal layers instead of making hardcoded paths
+    
+## 📜 License
+----------
+
+**MIT License** — Use freely, but I’m not responsible if your polygons spark a debate about Neolithic geopolitics.
+
+Coded with ☕ by **Juan**, because someone had to bridge Renfrew and QGIS, or at least give you an updated version

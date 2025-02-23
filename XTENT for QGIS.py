@@ -8,88 +8,78 @@ from osgeo import gdal, osr
 from qgis import processing
 
 # -------------------USER INPUTS----------------------------------------
-#At some point this will be done via QGIS at least inputing the path in the console
-# Input parameters (adjust these according to your data)
-use_costmodel = True #Set to false for an euclidean calc.
+use_costmodel = True  # Set to False for Euclidean calculation
+input_layer_name = 'yacimientos'
+size_field = 'z'
 
-input_layer_name = 'yacimientos' # Name of the input point layer in QGIS
-size_field = 'z' # Field name representing the size (population, relevance...) MUST BE A NUMBER
+# Cost model parameters
+cost_layer_path = r'C:\Users\elpor\...\cumcost_lidarOK.tif' if use_costmodel else None
+max_cost = 3600 if use_costmodel else None #Bc we dont really care in the other case
 
-#Cost model params (only if cost = true)
-cost_layer_path = r'C:\Users\elpor\...\cumcost_lidarOK.tif' if use_costmodel else None # Your cummulative cost, in this case using r.walk from GRASS. Forgot the extension - Use high definition data where possible
-max_cost = 3600 if use_costmodel else None #Max travel time
-
-#For both models
-beta = 2    #Put your beta as you wish, might need recalibration
-max_distance = 5000 #In meters
-inf = -9999 #Just in case we go oob
+# Classic model parameters
+max_distance = 5000  # Meters
+beta = 2
+inf = -9999
+if beta <= 0: #Validate beta
+    raise QgsProcessingException("Beta must be greater than zero!")
 
 # -------------------SETTING OUTPUTS-------------------------------------
-output_res = 1000 # I meters for classic model
-output_dominant_path = 'C:/.../dominant.tif' # Output path for dominant IDs raster
-output_influence_path = 'C:/.../influence.tif' # Output path for influence values raster
-output_polygons_path = 'C:/.../influence_areas.gpkg'  # Output path for polygons
+output_res = 1000
+output_dominant_path = 'C:/.../dominant.tif'
+output_influence_path = 'C:/.../influence.tif'
+output_polygons_path = 'C:/.../influence_areas.gpkg'
 
-
-# ------------------LOAD LAYERS + CRS-----------------------------------
-#We need to get sites + cumcost
-# Retrieve layers and its CRS
+# ------------------LOAD LAYERS + HANDLING ERRORS-----------------------------------------
 try:
     input_layer = QgsProject.instance().mapLayersByName(input_layer_name)[0]
 except IndexError:
     raise QgsProcessingException(f"Layer '{input_layer_name}' not found!")
-if use_costmodel and not cost_layer_path:
-    raise QgsProcessingException("Cost layer path required for cost model!")
-#Cost model set
+
+cost_nodata = None
 if use_costmodel:
+    if not cost_layer_path:
+        raise QgsProcessingException("Cost layer path required for cost model!")
+    
     cost_raster = gdal.Open(cost_layer_path)
     if not cost_raster:
         raise QgsProcessingException("Failed to open cost raster!")
+    
     cost_band = cost_raster.GetRasterBand(1)
+    cost_nodata = cost_band.GetNoDataValue()
     cost_transform = cost_raster.GetGeoTransform()
-    output_crs = QgsCoordinateReferenceSystem(cost_raster.GetProjection())  # Use cost layer's CRS should be the same as the project
-
-# -------------RASTER DIMENSIONS + ARRAYS-------------------------------
-    #Previous version wasn't accountig for the cost layer's res (x_res - y_res instead)
+    output_crs = QgsCoordinateReferenceSystem(cost_raster.GetProjection())
     x_min = cost_transform[0]
     y_max = cost_transform[3]
-    x_res = cost_transform[1]
-    y_res = abs(cost_transform[5])  # :) I almost jumped of a bridge
 
-    # Determine raster dimensions
     width = cost_raster.RasterXSize
     height = cost_raster.RasterYSize
+    
 else:
-    #Classic model taken from v1
     output_crs = input_layer.crs()
     if not output_crs.isValid():
-        raise QgsProcessingException("Invalid layer CRS!!")
+        raise QgsProcessingException("Invalid layer CRS!")
     if output_crs.isGeographic():
-        raise QgsProcessingException("Classic model requires a projected CRS")
-
+        raise QgsProcessingException("Classic model requires projected CRS!")
+    
     extent = input_layer.extent().buffered(max_distance)
     x_min = extent.xMinimum()
     y_max = extent.yMaximum()
-    width = int((extent.xMaximum() - x_min) / output_res)
-    height = int((y_max - extent.yMinimum()) / output_res)
-   
-# Initialize numpy arrays for storing results (filled with NoData)
-# Might throw an error if you have null values WIP
+    width = math.ceil((extent.width()) / output_res)
+    height = math.ceil((extent.height()) / output_res)
+
+# ------------------ARRAY INITIALIZATION--------------------------------
 dominant_data = np.full((height, width), inf, dtype=np.float32)
 influence_data = np.full((height, width), inf, dtype=np.float32)
 
 # -----------------SPATIAL INDEX----------------------------------------
-# Build spatial index for efficient spatial queries
 spatial_index = QgsSpatialIndex()
-features = {f.id(): f for f in input_layer.getFeatures()}
-for fid, feature in features.items():
-    if not feature.hasGeometry():
-        continue
-    features[feature.id()] = feature
-    spatial_index.insertFeature(feature)
+features = {}
+for feature in input_layer.getFeatures():
+    if feature.hasGeometry():
+        features[feature.id()] = feature
+        spatial_index.insertFeature(feature)
 
 # -----------------ITERATE CELLS----------------------------------------
-# Iterate through each cell in the raster
 for row in range(height):
     for col in range(width):
         if use_costmodel:
@@ -103,14 +93,6 @@ for row in range(height):
             cell_size_x = cell_size_y = output_res
 
         current_point = QgsPointXY(x_center, y_center)
-
-        # Define search area around the cell (taken directly from QGIS manual)
-        if use_costmodel:
-            max_dist_x = max_distance / cell_size_x
-            max_dist_y = max_distance / cell_size_y
-        else:
-            max_dist_x = max_dist_y = max_distance / output_res
-
         search_rect = QgsRectangle(
             x_center - max_distance,
             y_center - max_distance,
@@ -118,80 +100,72 @@ for row in range(height):
             y_center + max_distance
         )
 
-        # Query features within the search area
         candidate_fids = spatial_index.intersects(search_rect)
         if not candidate_fids:
             continue
-        
+
         max_influence = 0.0
         dominant_fid = None
-         #Iterate through fids. Keeps trakc of maximum influence value and the corresponding point (dominant_fid) for each
+
         for fid in candidate_fids:
             feature = features[fid]
             point = feature.geometry().asPoint()
+            
             if use_costmodel:
-                # Cost-based calculation
                 try:
                     cost_array = cost_band.ReadAsArray(col, row, 1, 1)
-                    cost = cost_array[0, 0] if cost_array else inf
+                    cost = cost_array[0, 0] if cost_array else cost_nodata
                 except:
-                    cost = inf
-
-                if cost <= 0 or cost > max_cost:
+                    cost = cost_nodata
+                
+                if cost == cost_nodata or cost <= 0 or cost > max_cost:
                     continue
-                influence = feature[size_field] / (cost ** beta)
+                
+                influence = feature[size_field] / (cost ** beta) #XTENT shout out to my boy renfrew
             else:
-                # Classic Euclidean calculation
                 dx = point.x() - x_center
                 dy = point.y() - y_center
                 distance = math.hypot(dx, dy)
-                if distance > max_distance or distance == 0:
+                distance = max(distance, 1e-9)  # Prevent division by zero was giving me problems all the weekend while testing
+                
+                if distance > max_distance:
                     continue
+                
                 influence = feature[size_field] / (distance ** beta)
-            
+
             if influence > max_influence:
                 max_influence = influence
                 dominant_fid = fid
-        
+
         if max_influence > 0:
             dominant_data[row, col] = dominant_fid if dominant_fid is not None else inf
             influence_data[row, col] = max_influence
 
 # ------------------SAVE RASTERS----------------------------------------
-driver = gdal.GetDriverByName('GTiff')
+def save_raster(path, data, transform_params, use_cost): #Function bc at the end of the day they are saved the same way
+    driver = gdal.GetDriverByName('GTiff')
+    if use_cost:
+        ds = driver.Create(path, width, height, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform(transform_params)
+    else:
+        ds = driver.Create(path, width, height, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform(transform_params)
+    
+    ds.SetProjection(output_crs.toWkt())
+    ds.GetRasterBand(1).WriteArray(data)
+    ds.GetRasterBand(1).SetNoDataValue(inf)
+    ds = None
 
-#Create dominant raster
-ds_dominant = driver.Create(
-    output_dominant_path, 
-    width, 
-    height, 
-    1, 
-    gdal.GDT_Float32)
-
+# Save both rasters
 if use_costmodel:
-    ds_dominant.SetGeoTransform((
-        x_min,
-        cost_transform[1],
-        0,
-        y_max,
-        0,
-        -abs(cost_transform[5])
-    ))
+    gt = (x_min, cost_transform[1], 0, y_max, 0, -abs(cost_transform[5]))
 else:
-    ds_dominant.SetGeoTransform((
-        x_min,
-        output_res,
-        0,
-        y_max,
-        0,
-        -output_res)
-    )
-# Save dominant IDs raster
-    ds_dominant.SetProjection(output_crs.toWkt())
-    ds_dominant.GetRasterBand(1).WriteArray(dominant_data)
-    ds_dominant.GetRasterBand(1).SetNoDataValue(inf)
-    ds_dominant = None
-# -----------------POLYGONIZE + SMOOTH----------------------------------
+    gt = (x_min, output_res, 0, y_max, 0, -output_res)
+
+save_raster(output_dominant_path, dominant_data, gt, use_costmodel)
+save_raster(output_influence_path, influence_data, gt, use_costmodel)
+
+# -----------------POLYGONIZATION---------------------------------------
 processing.run("gdal:polygonize", {
     'INPUT': output_dominant_path,
     'BAND': 1,
@@ -199,10 +173,11 @@ processing.run("gdal:polygonize", {
     'OUTPUT': output_polygons_path
 })
 
+# -----------------SMOOTHING--------------------------------------------
 smoothy_polygons_path = 'C:/.../smoothed.gpkg'
 processing.run("native:smoothgeometry", {
     'INPUT': output_polygons_path,
-    'ITERATIONS': 3,
+    'ITERATIONS': 3, #The greater the smmother
     'OFFSET': 0.2,
     'OUTPUT': smoothy_polygons_path
 })
