@@ -12,10 +12,8 @@ from PyQt5.QtWidgets import QInputDialog, QMessageBox
 #-------------------------------------FUNCTIONS----------------------------------------------------------------------------
 
 def save_raster(path, data, transform_params, use_cost, width, height, output_crs, nodata_value):
-    """
-    Save a raster dataset using GDAL.
-    All needed parameters are passed so that there is no dependency on globals.
-    """
+    #Save a raster dataset using GDAL.
+    #All needed parameters are passed so that there is no dependency on globals.
     driver = gdal.GetDriverByName('GTiff')
     ds = driver.Create(path, width, height, 1, gdal.GDT_Float32)
     ds.SetGeoTransform(transform_params)
@@ -25,9 +23,7 @@ def save_raster(path, data, transform_params, use_cost, width, height, output_cr
     ds = None
 
 def get_layers():
-    """
-    Retrieve available vector layers in the current QGIS project.
-    """
+    #Retrieve available vector layers in the current QGIS project.
     layers = QgsProject.instance().mapLayers().values()
     vector_layers = [layer.name() for layer in layers if isinstance(layer, QgsVectorLayer)]
     msg = "Available layers:\n" + "\n".join(f"{i+1}. {name}" for i, name in enumerate(vector_layers))
@@ -35,9 +31,7 @@ def get_layers():
     return vector_layers
 
 def get_numlayer(name_layer):
-    """
-    Retrieve the names of numeric fields from a given vector layer.
-    """
+    #Retrieve the names of numeric fields from a given vector layer.
     layer_list = QgsProject.instance().mapLayersByName(name_layer)
     if not layer_list:
         raise QgsProcessingException(f"Layer '{name_layer}' not found!")
@@ -48,10 +42,8 @@ def get_numlayer(name_layer):
     return fields
 
 def get_input():
-    """
-    Get all necessary inputs from the user using QInputDialog.
-    This method works better in QGIS as it opens dialog windows for input.
-    """
+    # Get all necessary inputs from the user using QInputDialog.
+    # This method works better in QGIS as it opens dialog windows for input.
     inputs = {}
     
     # Choose analysis mode
