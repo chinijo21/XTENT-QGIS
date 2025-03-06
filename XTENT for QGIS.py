@@ -9,9 +9,79 @@ from qgis import processing
 import qgis.utils
 from PyQt5.QtWidgets import QInputDialog, QMessageBox, QFileDialog
 from pathlib import Path
+#------------------------------------GUI-----------------------------------------------------------------------------------
+class LayerSelectionDialog(QDialog):
+    def __init__(self, title, items, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        
+        layout = QVBoxLayout()
+        self.list_widget = QListWidget()
+        self.list_widget.addItems([f"{i+1}. {item}" for i, item in enumerate(items)])
+        self.list_widget.setCurrentRow(0)
+        
+        self.spin_box = QSpinBox()
+        self.spin_box.setMinimum(1)
+        self.spin_box.setMaximum(len(items))
+        self.spin_box.setValue(1)
+        
+        layout.addWidget(QLabel("Available layers:"))
+        layout.addWidget(self.list_widget)
+        layout.addWidget(QLabel("Enter selection number:"))
+        layout.addWidget(self.spin_box)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+        self.list_widget.itemDoubleClicked.connect(self.on_double_click)
 
+    def get_selection(self):
+        return self.spin_box.value() - 1
+
+    def on_double_click(self, item):
+        selected_row = self.list_widget.row(item)
+        self.spin_box.setValue(selected_row + 1)
+        self.accept()
+
+class NumericFieldDialog(QDialog):
+    def __init__(self, title, fields, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        
+        layout = QVBoxLayout()
+        self.list_widget = QListWidget()
+        self.list_widget.addItems([f"{i+1}. {field}" for i, field in enumerate(fields)])
+        self.list_widget.setCurrentRow(0)
+        
+        self.spin_box = QSpinBox()
+        self.spin_box.setMinimum(1)
+        self.spin_box.setMaximum(len(fields))
+        self.spin_box.setValue(1)
+        
+        layout.addWidget(QLabel("Available numeric fields:"))
+        layout.addWidget(self.list_widget)
+        layout.addWidget(QLabel("Enter selection number:"))
+        layout.addWidget(self.spin_box)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        
+        self.setLayout(layout)
+        self.list_widget.itemDoubleClicked.connect(self.on_double_click)
+
+    def get_selection(self):
+        return self.spin_box.value() - 1
+
+    def on_double_click(self, item):
+        selected_row = self.list_widget.row(item)
+        self.spin_box.setValue(selected_row + 1)
+        self.accept()
 #-------------------------------------FUNCTIONS----------------------------------------------------------------------------
-
 def save_raster(path, data, transform_params, width, height, output_crs, nodata_value):
     # Validate parameters
     if not path.strip() or width <= 0 or height <= 0:
@@ -31,19 +101,24 @@ def save_raster(path, data, transform_params, width, height, output_crs, nodata_
 def get_layers():
     layers = QgsProject.instance().mapLayers().values()
     vector_layers = [layer.name() for layer in layers if isinstance(layer, QgsVectorLayer)]
-    msg = "Available layers:\n" + "\n".join(f"{i+1}. {name}" for i, name in enumerate(vector_layers))
-    QMessageBox.information(None, "Layers", msg)
-    return vector_layers
+    if not vector_layers:
+        raise QgsProcessingException("No vector layers found!")
+    
+    dlg = LayerSelectionDialog("Select Input Layer", vector_layers)
+    if not dlg.exec_():
+        raise QgsProcessingException("Operation canceled.")
+    return vector_layers[dlg.get_selection()]
 
-def get_numlayer(name_layer):
-    layer_list = QgsProject.instance().mapLayersByName(name_layer)
-    if not layer_list:
-        raise QgsProcessingException(f"Layer '{name_layer}' not found!")
-    layer = layer_list[0]
+def get_numlayer(layer_name):
+    layer = QgsProject.instance().mapLayersByName(layer_name)[0]
     fields = [field.name() for field in layer.fields() if field.isNumeric()]
-    msg = "Available numeric fields:\n" + "\n".join(f"{i+1}. {f}" for i, f in enumerate(fields))
-    QMessageBox.information(None, "Numeric Fields", msg)
-    return fields
+    if not fields:
+        raise QgsProcessingException("No numeric fields found!")
+    
+    dlg = NumericFieldDialog("Select Size Field", fields)
+    if not dlg.exec_():
+        raise QgsProcessingException("Operation canceled.")
+    return fields[dlg.get_selection()]
 
 def get_input():
     inputs = {}
@@ -55,22 +130,13 @@ def get_input():
         raise QgsProcessingException("Operation canceled.")
     inputs['use_costmodel'] = (mode.strip() == '1')
 
-    # Layer selection
-    vector_layers = get_layers()
-    layer_choice, ok = QInputDialog.getInt(None, "Input Layer", 
-        "Enter the number for the input point layer:", 1, 1, len(vector_layers))
-    if not ok:
-        raise QgsProcessingException("Operation canceled.")
-    inputs['input_layer'] = vector_layers[layer_choice - 1]
+    # Layer selection (handled by custom dialog)
+    inputs['input_layer'] = get_layers()  # Directly get selected layer name
 
     # Size field selection
-    num_fields = get_numlayer(inputs['input_layer'])
-    field_choice, ok = QInputDialog.getInt(None, "Size Field", 
-        "Enter the number for the size field:", 1, 1, len(num_fields))
-    if not ok:
-        raise QgsProcessingException("Operation canceled.")
-    inputs['size_field'] = num_fields[field_choice - 1]
+    inputs['size_field'] = get_numlayer(inputs['input_layer'])
 
+    # Rest of the function remains unchanged...
     # Beta value
     beta, ok = QInputDialog.getDouble(None, "Beta Value", 
         "Enter beta value (>0):", decimals=2, min=0.01)
