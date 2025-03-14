@@ -17,7 +17,7 @@ from pathlib import Path
 
 #-------------------------------------CORE FUNCTIONS------------------------------------------------------------------------
 def save_raster(path, data, transform_params, width, height, output_crs, nodata_value, data_type=gdal.GDT_Float32):
-    """Missing function added back with validation"""
+    #Saves a raster to file with validation
     if not path.strip() or width <= 0 or height <= 0:
         raise QgsProcessingException("Invalid output path or raster dimensions!")
     
@@ -31,7 +31,7 @@ def save_raster(path, data, transform_params, width, height, output_crs, nodata_
     band = ds.GetRasterBand(1)
     band.WriteArray(data)
     band.SetNoDataValue(nodata_value)
-    ds = None
+    ds = None  # Explicitly release GDAL dataset
 
 #-------------------------------------CUSTOM DIALOGS-----------------------------------------------------------------------
 class InputDialog(QDialog):
@@ -42,6 +42,8 @@ class InputDialog(QDialog):
         self.create_widgets()
         self.setup_layout()
         self.connect_events()
+        # Populate layers after all widgets are created.
+        self.populate_layers()
 
     def create_widgets(self):
         # Analysis Mode
@@ -50,7 +52,6 @@ class InputDialog(QDialog):
         
         # Layer Selection
         self.layer_combo = QComboBox()
-        self.populate_layers()
         
         # Numeric Field
         self.numeric_combo = QComboBox()
@@ -125,6 +126,7 @@ class InputDialog(QDialog):
         self.toggle_mode(0)
 
     def toggle_mode(self, index):
+        # Toggle cost-based widgets vs. Euclidean widgets
         for widget in [self.max_dist_cost_edit, self.cost_path_edit, self.cost_browse_btn, self.max_cost_edit]:
             widget.setVisible(index == 0)
         for widget in [self.max_dist_euclid_edit, self.output_res_edit, self.iterations_edit, self.offset_edit]:
@@ -159,7 +161,7 @@ class InputDialog(QDialog):
             self.cost_path_edit.setText(path)
 
     def get_parameters(self):
-        #Added input validation
+        #Retrieve and validate parameters from user input
         try:
             return {
                 'use_costmodel': self.mode_combo.currentIndex() == 0,
@@ -203,6 +205,10 @@ class ProgressDialog(QDialog):
 
 #-------------------------------------PROCESSING THREAD--------------------------------------------------------------------
 class XtentProcessor(QThread):
+    # Signals for thread-safe processing and layer loading
+    run_processing = pyqtSignal(str, dict, object)
+    load_layer = pyqtSignal(str, str, str)
+    
     progress_updated = pyqtSignal(int)
     finished = pyqtSignal(bool, str)
 
@@ -212,6 +218,21 @@ class XtentProcessor(QThread):
         self.output_dir = output_dir
         self.nodata_value = -9999
         self.cancel_requested = False
+        # Connect signals to their thread-safe handlers
+        self.run_processing.connect(self._run_processing)
+        self.load_layer.connect(self._load_layer)
+
+    def _run_processing(self, algorithm, parameters, callback):
+        """Thread-safe wrapper to run a QGIS processing algorithm in the main thread."""
+        result = processing.run(algorithm, parameters)
+        callback(result)
+
+    def _load_layer(self, path, name, provider):
+        """Thread-safe layer loading (vector if provider 'ogr', raster if 'gdal')."""
+        if provider == 'gdal':
+            qgis.utils.iface.addRasterLayer(path, name)
+        else:
+            qgis.utils.iface.addVectorLayer(path, name, provider)
 
     def run(self):
         try:
@@ -250,29 +271,40 @@ class XtentProcessor(QThread):
                 width = max(math.ceil(extent.width() / output_res), 1)
                 height = max(math.ceil(extent.height() / output_res), 1)
 
-            # Initialize arrays
+            # Memory safeguard: check total pixel count (here, maximum 100 million pixels)
+            max_pixels = 100_000_000
+            if width * height > max_pixels:
+                raise QgsProcessingException("Raster dimensions too large! Reduce resolution.")
+
+            # Initialize numpy arrays for results
             dominant_data = np.full((height, width), self.nodata_value, dtype=np.float32)
             influence_data = np.full((height, width), self.nodata_value, dtype=np.float32)
             comp_id_data = np.full((height, width), self.nodata_value, dtype=np.float32)
             comp_strength_data = np.full((height, width), 0.0, dtype=np.float32)
 
-            # Spatial index
+            # Build spatial index of input features
             spatial_index = QgsSpatialIndex()
             for fid in features:
                 spatial_index.insertFeature(features[fid])
 
+            # If using cost-based mode, open cost raster band once (later we explicitly close it)
+            if self.params['use_costmodel']:
+                cost_band = cost_raster.GetRasterBand(1)
+
             # ---------- MAIN PROCESSING LOOP ----------
-            total_rows = max(height, 1)  # Prevent division by zero
+            total_rows = max(height, 1)
+            last_progress = -1
             for row in range(height):
                 if self.cancel_requested:
                     break
                 
-                # Update progress (0-100%)
-                self.progress_updated.emit(int((row / total_rows) * 100))
-                
+                progress_val = int((row / total_rows) * 100)
+                if progress_val != last_progress:
+                    self.progress_updated.emit(progress_val)
+                    last_progress = progress_val
+
                 for col in range(width):
-                    # ---------- CELL PROCESSING ----------
-                    # Cell center calculation
+                    # Compute cell center
                     if self.params['use_costmodel']:
                         x_center = x_min + (col + 0.5) * cost_transform[1]
                         y_center = y_max - (row + 0.5) * abs(cost_transform[5])
@@ -280,7 +312,7 @@ class XtentProcessor(QThread):
                         x_center = x_min + (col + 0.5) * self.params['output_res']
                         y_center = y_max - (row + 0.5) * self.params['output_res']
 
-                    # Search candidates
+                    # Define search rectangle for candidate features
                     search_rect = QgsRectangle(
                         x_center - self.params['max_distance'],
                         y_center - self.params['max_distance'],
@@ -291,23 +323,20 @@ class XtentProcessor(QThread):
                     if not candidate_fids:
                         continue
 
-                    # Calculate influences with ruler hierarchy
+                    # Compute influence values with ruler hierarchy
                     influence_dict = {}
                     for fid in candidate_fids:
                         feature = features[fid]
                         point = feature.geometry().asPoint()
-                        
-                        # Resolve ruler hierarchy
                         current_fid = fid
                         while current_fid in ruler_map:
                             current_fid = ruler_map[current_fid]
-                        
-                        # Calculate influence
                         if self.params['use_costmodel']:
                             try:
-                                cost_array = cost_raster.GetRasterBand(1).ReadAsArray(col, row, 1, 1)
+                                # Read single pixel from cost raster (if not already cached, consider block caching)
+                                cost_array = cost_band.ReadAsArray(col, row, 1, 1)
                                 cost = cost_array[0, 0] if cost_array is not None else self.nodata_value
-                            except:
+                            except Exception:
                                 cost = self.nodata_value
                             if cost <= 0 or cost > self.params['max_cost']:
                                 continue
@@ -320,13 +349,11 @@ class XtentProcessor(QThread):
                                 continue
                             influence = feature[self.params['size_field']] / (distance ** self.params['beta'])
                         
-                        # Aggregate influences
                         if current_fid in influence_dict:
                             influence_dict[current_fid] += influence
                         else:
                             influence_dict[current_fid] = influence
 
-                    # Sort and store results
                     sorted_influences = sorted(influence_dict.items(), key=lambda x: x[1], reverse=True)
                     if not sorted_influences:
                         continue
@@ -341,9 +368,13 @@ class XtentProcessor(QThread):
                         comp_id_data[row, col] = comp_fid
                         comp_strength_data[row, col] = comp_strength
 
+            # Release cost raster if used
+            if self.params['use_costmodel']:
+                cost_raster = None
+
             # ---------- POST-PROCESSING ----------
             if not self.cancel_requested:
-                # Save rasters
+                # Construct GeoTransform for output rasters
                 gt = (x_min, 
                       cost_transform[1] if self.params['use_costmodel'] else self.params['output_res'], 
                       0, 
@@ -363,17 +394,50 @@ class XtentProcessor(QThread):
                 save_raster(output_paths['comp_id'], comp_id_data, gt, width, height, output_crs, self.nodata_value)
                 save_raster(output_paths['comp_strength'], comp_strength_data, gt, width, height, output_crs, self.nodata_value)
 
-                # Additional processing with validation
-                self.post_process(output_paths['dominant'])
-                self.load_results()
+                # Start post-processing with thread-safe calls
+                self.post_process_step(output_paths['dominant'])
 
             self.finished.emit(not self.cancel_requested, self.output_dir)
-
         except Exception as e:
             self.finished.emit(False, str(e))
 
+    def post_process_step(self, dominant_path):
+        #Initiate post-processing (sieve, polygonize, smooth) using thread-safe signals.
+        if not Path(dominant_path).exists():
+            return
+        sieved_path = f"{self.output_dir}/dominant_sieved.tif"
+        self.run_processing.emit("gdal:sieve", {
+            'INPUT': dominant_path,
+            'THRESHOLD': 10,
+            'OUTPUT': sieved_path
+        }, lambda res: self._on_sieve_complete(sieved_path))
+
+    def _on_sieve_complete(self, sieved_path):
+        self.run_processing.emit("gdal:polygonize", {
+            'INPUT': sieved_path,
+            'BAND': 1,
+            'FIELD': 'dominant_id',
+            'OUTPUT': f"{self.output_dir}/influence_areas.gpkg"
+        }, lambda res: self._on_polygonize_complete())
+
+    def _on_polygonize_complete(self):
+        self.run_processing.emit("native:smoothgeometry", {
+            'INPUT': f"{self.output_dir}/influence_areas.gpkg",
+            'ITERATIONS': self.params.get('smoothing_iterations', 5),
+            'OFFSET': self.params.get('smoothing_offset', 0.4),
+            'OUTPUT': f"{self.output_dir}/smoothed.gpkg"
+        }, lambda res: self._finalize())
+
+    def _finalize(self):
+        outputs = [
+            ('dominant.tif', 'Dominant_IDs', 'gdal'),
+            ('smoothed.gpkg', 'Smoothed_Influence', 'ogr')
+        ]
+        for fname, name, prov in outputs:
+            self.load_layer.emit(f"{self.output_dir}/{fname}", name, prov)
+
     def load_results(self):
-        """Added result loading functionality"""
+        #Alternative result loading if needed.
         try:
             iface = qgis.utils.iface
             outputs = [
@@ -383,7 +447,6 @@ class XtentProcessor(QThread):
                 ('competition_strength.tif', 'Competition_Strength'),
                 ('smoothed.gpkg', 'Smoothed_Influence')
             ]
-            
             for fname, layer_name in outputs:
                 path = f"{self.output_dir}/{fname}"
                 if Path(path).exists():
@@ -391,40 +454,8 @@ class XtentProcessor(QThread):
                         iface.addRasterLayer(path, layer_name)
                     else:
                         iface.addVectorLayer(path, layer_name, 'ogr')
-                        
         except Exception as e:
             QMessageBox.warning(None, "Layer Loading", f"Could not load layers: {str(e)}")
-
-    def post_process(self, dominant_path):
-        """Added processing validation"""
-        if not Path(dominant_path).exists():
-            return
-
-        sieved_path = f"{self.output_dir}/dominant_sieved.tif"
-        processing.run("gdal:sieve", {
-            'INPUT': dominant_path,
-            'THRESHOLD': 10,
-            'OUTPUT': sieved_path
-        })
-        
-        if not Path(sieved_path).exists():
-            raise QgsProcessingException("Sieving failed!")
-        
-        # Continue with polygonization and smoothing
-        output_polygons = f"{self.output_dir}/influence_areas.gpkg"
-        processing.run("gdal:polygonize", {
-            'INPUT': sieved_path,
-            'BAND': 1,
-            'FIELD': 'dominant_id',
-            'OUTPUT': output_polygons
-        })
-
-        processing.run("native:smoothgeometry", {
-            'INPUT': output_polygons,
-            'ITERATIONS': self.params.get('smoothing_iterations', 5),
-            'OFFSET': self.params.get('smoothing_offset', 0.4),
-            'OUTPUT': f"{self.output_dir}/smoothed.gpkg"
-        })
 
     def cancel(self):
         self.cancel_requested = True
@@ -432,17 +463,16 @@ class XtentProcessor(QThread):
 #-------------------------------------MAIN EXECUTION-----------------------------------------------------------------------
 def main():
     try:
-        # Added QGIS initialization check
+        # QGIS project initialization check
         if not QgsProject.instance():
             raise QgsProcessingException("QGIS project not initialized!")
 
-        # Input collection
+        # Input dialog to collect parameters
         input_dialog = InputDialog()
         if input_dialog.exec_() != QDialog.Accepted:
             return
         
         params = input_dialog.get_parameters()
-        # Validate cost raster if needed
         if params['use_costmodel'] and not Path(params['cost_path']).exists():
             raise QgsProcessingException("Cost raster path is invalid!")
         
@@ -450,11 +480,10 @@ def main():
         if not output_dir:
             return
 
-        # Progress monitoring
         progress_dialog = ProgressDialog()
         processor = XtentProcessor(params, output_dir)
         
-        # Connect signals
+        # Connect progress and finished signals to GUI handlers
         processor.progress_updated.connect(progress_dialog.update_progress)
         processor.finished.connect(lambda success, msg: (
             progress_dialog.close(),
@@ -462,7 +491,9 @@ def main():
             QMessageBox.critical(None, "Error", f"Failed: {msg}")
         ))
         
-        # Start processing
+        # Move the processor to the main thread to ensure all QGIS API calls occur safely
+        processor.moveToThread(QApplication.instance().thread())
+
         progress_dialog.show()
         processor.start()
         
