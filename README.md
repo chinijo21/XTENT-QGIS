@@ -22,7 +22,7 @@ User-friendly XTENT implementation designed for QGIS Python Editor with easy-to-
 - 🎯 **Easy Configuration**: Edit parameters directly at the top of the script - no command-line arguments needed
 - 📐 **Polygon Smoothing**: Optional Chaikin smoothing for rounded, organic-looking territory boundaries
 - 🔄 **MultiPoint Support**: Automatically handles MultiPoint geometries and extracts individual centers
-- 📊 **Dual Output**: Generates both territory assignments and influence strength rasters
+- 📊 **Dual Output**: Generates both territory assignments and influence strength rasters miau
 - ✅ **Robust Error Handling**: Clear error messages and validation checks
 - 🎨 **QGIS Integration**: Automatically loads all outputs into QGIS layers panel
 
